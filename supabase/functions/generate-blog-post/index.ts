@@ -45,10 +45,23 @@ YASAKLI KALIPLAR (HİÇ KULLANMA):
 - "Doyumsuz manzara", "cennetten bir köşe"
 - "AI olarak", "yapay zeka olarak"
 
-LOKAL BİLGİ KURALI:
-- GERÇEK OLDUĞUNDAN EMİN OLMADIĞIN yer/restoran adını UYDURMA.
-- Bodrum'un gerçek mahalle/koy isimleri: Yalıkavak, Türkbükü, Gündoğan, Gümbet, Bitez, Turgutreis, Akyarlar, Ortakent, Bodrum Merkez, Kumbahçe, Bardakçı Koyu, Karaada
-- Sezon/saat/fiyat bilgileri için "yaz aylarında", "öğleden sonra", "uygun fiyatlı" gibi güvenli ifadeler
+LOKAL BİLGİ KURALI (YASAL KRİTİK — IHLAL ETME):
+- ASLA spesifik bir işletme/restoran/otel/cafe/bar/lokanta/pansiyon/dükkan/butik/işyeri adı YAZMA.
+  Türkiye Reklam Kurulu yasalarına göre işletme adı belirtmek "tanıtım" sayılır ve #reklam etiketi gerektirir.
+  Bu yüzden hiçbir işletmeyi adıyla anma.
+
+- KULLANABİLECEKLERİN (serbest):
+  - Mahalle/koy/bölge adları: Yalıkavak, Türkbükü, Gündoğan, Gümbet, Bitez, Turgutreis, Akyarlar, Ortakent, Bodrum Merkez, Kumbahçe, Bardakçı Koyu
+  - Kamu mekânları: Bodrum Kalesi, Mausoleion, Antik Tiyatro, Karaada, Yalıkavak Marina, Sualtı Arkeoloji Müzesi
+  - Genel kategori ifadeleri: "bölgedeki balık restoranları", "butik otel seçenekleri", "yerel cafe'ler"
+  - Sezon/saat: "yaz aylarında", "öğleden sonra", "sabah erken saatler"
+
+- KULLANAMAYACAKLARIN (YASAK):
+  - "Limon Restoran", "X Otel", "Y Cafe", "Z Pansiyon" gibi özel isimle başlayan işletme adı
+  - Spesifik fiyat tutarı ("kişi başı 250 TL")
+  - Spesifik telefon/web adresi
+
+- ŞÜPHEDE KAL: işletme olabilecek herhangi bir özel isim yerine kategori kullan.
 `;
 
 const OUTPUT_SCHEMA = `
@@ -138,6 +151,74 @@ function detectLocalSignals(body: string) {
   return { has: set.length >= 2, found: set };
 }
 
+// Whitelist of public landmarks/areas — these can appear without triggering business detection
+const PUBLIC_PLACE_WHITELIST = new Set(
+  [
+    "Yalıkavak", "Türkbükü", "Gündoğan", "Gümbet", "Bitez", "Turgutreis",
+    "Akyarlar", "Ortakent", "Bodrum", "Kumbahçe", "Bardakçı", "Karaada",
+    "Kara Ada", "Mausoleion", "Mausoleum", "Bodrum Kalesi",
+    "Yalıkavak Marina", "Sualtı Arkeoloji Müzesi", "Antik Tiyatro",
+    "Cumartesi Pazarı", "Çarşamba Pazarı", // weekly markets — public events
+  ].map((s) => s.toLowerCase()),
+);
+
+// Words that strongly indicate a specific business establishment.
+// If found preceded/followed by a capitalized proper noun, flag as advertising.
+const BUSINESS_KEYWORDS = [
+  "restoran", "restorant", "restaurant",
+  "lokanta", "meyhane",
+  "kafe", "cafe", "coffee",
+  "otel", "hotel", "boutique hotel",
+  "pansiyon", "hostel",
+  "bar", "pub", "beach club", "beach kulüp",
+  "butik", "boutique",
+  "mağaza", "shop", "store",
+  "kulüp", "club",
+  "spa",
+  "ranch",
+];
+
+/**
+ * Detects specific business name mentions like "Limon Restoran", "Olive Otel",
+ * "X Cafe", etc. Returns the detected phrases. Used to trigger #reklam disclosure
+ * (Türkiye Reklam Kurulu compliance).
+ */
+function detectBusinessMentions(body: string): string[] {
+  const found = new Set<string>();
+  for (const kw of BUSINESS_KEYWORDS) {
+    // Match: "ProperNoun ProperNoun Restoran" or "Restoran ProperNoun"
+    // Capitalized word(s) adjacent to a business keyword.
+    const escKw = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(
+      // Before: 1-3 capitalized words then keyword
+      `(?:\\b[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:\\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+){0,2}\\s+${escKw})|` +
+      // After: keyword then 1-2 capitalized words (e.g., "Cafe Limon")
+      `(?:${escKw}\\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:\\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+)?)`,
+      "gi",
+    );
+    const matches = body.match(pattern) ?? [];
+    for (const m of matches) {
+      const lower = m.toLowerCase().trim();
+      // Skip if it's a whitelisted public place phrase
+      let isPublic = false;
+      for (const wl of PUBLIC_PLACE_WHITELIST) {
+        if (lower.includes(wl)) {
+          isPublic = true;
+          break;
+        }
+      }
+      if (!isPublic) found.add(m.trim());
+    }
+  }
+  return [...found];
+}
+
+const REKLAM_FOOTER = `
+
+---
+
+> **#reklam** · Bu yazıda spesifik bir işletme adı geçtiği için yasal uyumluluk gereği reklam etiketi eklenmiştir. İçerikteki işletme isimleri yalnızca yön belirtme amaçlıdır; sponsorluk anlaşması içermez.`;
+
 const BANNED = [
   "bodrumun incisi", "muhteşem güzel", "unutulmaz tatil", "sizin için derledik",
   "şüphesiz ki", "kesinlikle harika", "muhakkak ki", "eşsiz güzellikler",
@@ -155,6 +236,7 @@ function qualityCheck(v: any) {
   const h2 = (v.body_md.match(/^## /gm) ?? []).length;
   const localSig = detectLocalSignals(v.body_md);
   const banned = bannedHits(v.body_md);
+  const businessMentions = detectBusinessMentions(v.body_md);
   const issues: string[] = [];
 
   if (wc < 650) issues.push(`word_count_low (${wc})`);
@@ -166,6 +248,9 @@ function qualityCheck(v: any) {
   if ((v.faq ?? []).length < 2) issues.push("faq_low");
   if (!localSig.has) issues.push(`local_signals_low (${localSig.found.length})`);
   if (banned.length > 0) issues.push(`banned_phrases: ${banned.join("|")}`);
+  if (businessMentions.length > 0) {
+    issues.push(`business_mention_REKLAM_required: ${businessMentions.join(" | ")}`);
+  }
 
   return {
     passes: issues.length === 0,
@@ -174,6 +259,8 @@ function qualityCheck(v: any) {
     reading_time_min: readingTimeMin(wc),
     local_signals_found: localSig.found,
     has_local_signals: localSig.has,
+    business_mentions: businessMentions,
+    requires_reklam: businessMentions.length > 0,
   };
 }
 
@@ -249,6 +336,16 @@ Yukarıdaki şemada blog yazısı üret.`;
       (ai.usage?.input_tokens ?? 0) * 0.000003 +
       (ai.usage?.output_tokens ?? 0) * 0.000015;
 
+    // Legal compliance — if business names slipped through, append #reklam footer
+    let finalBody = json.body_md;
+    if (qc.requires_reklam) {
+      finalBody = json.body_md + REKLAM_FOOTER;
+      console.warn(
+        `[generate-blog-post] business mentions detected, #reklam appended for post=${post.id} site=${site}:`,
+        qc.business_mentions,
+      );
+    }
+
     const row = {
       post_id: post.id,
       site,
@@ -258,7 +355,7 @@ Yukarıdaki şemada blog yazısı üret.`;
       meta_title: json.meta_title ?? json.title,
       meta_description: json.meta_description,
       excerpt: json.excerpt,
-      body_md: json.body_md,
+      body_md: finalBody,
       word_count: qc.word_count,
       reading_time_min: qc.reading_time_min,
       hero_image: json.image_slots?.find((s: any) => s.position === "hero") ?? null,
@@ -276,6 +373,8 @@ Yukarıdaki şemada blog yazısı üret.`;
       local_signals_found: qc.local_signals_found,
       passes_quality_gate: qc.passes,
       quality_issues: qc.issues,
+      requires_reklam_disclosure: qc.requires_reklam,
+      business_mentions: qc.business_mentions,
       generation_model: MODEL,
       generation_tokens_input: ai.usage?.input_tokens ?? null,
       generation_tokens_output: ai.usage?.output_tokens ?? null,

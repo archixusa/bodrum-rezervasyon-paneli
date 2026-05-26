@@ -76,6 +76,8 @@ export interface BlogSiteVersion {
   local_signals_found: string[] | null;
   passes_quality_gate: boolean;
   quality_issues: string[];
+  requires_reklam_disclosure: boolean;
+  business_mentions: string[] | null;
   github_pr_url: string | null;
   published_url: string | null;
   published_at: string | null;

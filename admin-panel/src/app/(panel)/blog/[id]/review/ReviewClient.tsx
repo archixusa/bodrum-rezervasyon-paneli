@@ -215,6 +215,33 @@ export function ReviewClient({
         </div>
       </div>
 
+      {versions.some((v) => v.requires_reklam_disclosure) && (
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-danger/30 bg-danger/5 p-4">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
+          <div className="text-sm">
+            <p className="font-semibold text-danger">⚖️ Yasal uyarı — #reklam etiketi eklendi</p>
+            <p className="mt-1 text-ink">
+              Yazıda spesifik bir işletme adı geçtiği tespit edildi. Türkiye Reklam Kurulu / TKHK
+              Madde 61 gereği <span className="font-mono">#reklam</span> footer'ı otomatik eklendi.
+            </p>
+            <p className="mt-2 text-xs text-muted">
+              Tespit edilen ifadeler:{" "}
+              {versions
+                .flatMap((v) => v.business_mentions ?? [])
+                .filter((s, i, arr) => arr.indexOf(s) === i)
+                .map((m) => (
+                  <span key={m} className="mr-1 inline-block rounded bg-danger/10 px-1.5 py-0.5 font-mono text-danger">
+                    {m}
+                  </span>
+                ))}
+            </p>
+            <p className="mt-2 text-xs text-muted">
+              <strong>Tavsiye:</strong> İçeriği düzenleyip işletme adını kategoriyle değiştirirsen ("Limon Restoran" → "bir balık restoranı"), <em>Yeniden Üret</em>'e basarak temiz versiyon alabilirsin; o zaman #reklam ihtiyacı kalkar.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-2">
         {versions.length === 0 ? (
           <p className="col-span-2 py-12 text-center text-muted">
