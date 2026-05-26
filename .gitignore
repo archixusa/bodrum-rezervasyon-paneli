@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Supabase
+.supabase/
+
+# Env
+.env
+.env.local
+.env*.local
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+*.log
+.claude-flow/
+.claude/
+
+# Generated
+*.tsbuildinfo
+next-env.d.ts

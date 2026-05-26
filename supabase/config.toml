@@ -1,0 +1,45 @@
+# Bodrum Rezervasyon Yönetim — Supabase config
+# Bu dosya `supabase init` çıktısını minimum tutuyor; tam config için
+# `npx supabase init` çalıştırınca üretilen versiyonla değiştirin.
+
+project_id = "bodrum-rezervasyon"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = [
+  "http://localhost:3000/auth/callback",
+  "https://*.vercel.app/auth/callback",
+]
+jwt_expiry = 3600
+enable_signup = false  # sadece davetli admin
+
+[auth.email]
+enable_signup = false
+double_confirm_changes = true
+enable_confirmations = false
+
+[functions.notify-new-request]
+verify_jwt = false  # webhook olarak çağrılacak

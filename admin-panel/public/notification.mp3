@@ -1,0 +1,3 @@
+PLACEHOLDER — replace with a real short notification sound (~30 KB)
+You can grab one from https://notificationsounds.com/ or use:
+ffmpeg -i input.wav -codec:a libmp3lame -qscale:a 8 notification.mp3

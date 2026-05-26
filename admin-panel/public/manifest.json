@@ -1,0 +1,12 @@
+{
+  "name": "Bodrum Rezervasyon Paneli",
+  "short_name": "Rezervasyon",
+  "description": "Bodrum villa/apart rezervasyon yönetim paneli",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F6FAFB",
+  "theme_color": "#053C4A",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
