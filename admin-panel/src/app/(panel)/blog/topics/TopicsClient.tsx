@@ -107,18 +107,31 @@ export function TopicsClient({
         .update({ used: true, used_in_post_id: post.id, used_at: new Date().toISOString() })
         .eq("id", t.id);
 
-      // 3. Kick off BOTH sites (fire-and-forget — Edge Function returns 202
-      //    immediately, generation runs in background via EdgeRuntime.waitUntil).
+      // 3. Kick off BOTH sites with raw fetch (bypass supabase-js timeout).
+      //    Edge Function returns 202 immediately; work runs in background.
+      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-blog-post`;
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+      const headers = {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "apikey": process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+      };
+      console.log("[blog-v3-fire-forget] generateFromTopic", { postId: post.id });
       const [kRes, vRes] = await Promise.all([
-        supabase.functions.invoke("generate-blog-post", {
-          body: { post_id: post.id, site: "bodrumapartkiralama" },
+        fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ post_id: post.id, site: "bodrumapartkiralama" }),
         }),
-        supabase.functions.invoke("generate-blog-post", {
-          body: { post_id: post.id, site: "bodrumapartvilla" },
+        fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ post_id: post.id, site: "bodrumapartvilla" }),
         }),
       ]);
-      if (kRes.error) throw new Error("Kiralama start fail: " + kRes.error.message);
-      if (vRes.error) throw new Error("Villa start fail: " + vRes.error.message);
+      if (!kRes.ok && kRes.status !== 202) throw new Error(`Kiralama HTTP ${kRes.status}`);
+      if (!vRes.ok && vRes.status !== 202) throw new Error(`Villa HTTP ${vRes.status}`);
 
       toaster.push({
         title: "⏳ Üretim başladı",

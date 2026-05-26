@@ -92,24 +92,39 @@ export function ReviewClient({
   }, [post.id]);
 
   async function regenerateSingleSite(siteToRegen: BlogSiteVersion["site"]) {
+    console.log("[blog-v3-fire-forget] regenerateSingleSite", { site: siteToRegen, postId: post.id });
     if (!confirm(`Sadece "${BLOG_SITE_LABELS[siteToRegen].label}" versiyonu yeniden üretilecek. (~80 sn)`))
       return;
     setRegeneratingSite(siteToRegen);
     try {
-      // Fire-and-forget — Edge Function returns 202 immediately,
-      // work runs in background. Realtime subscription handles completion.
-      const { error } = await supabase.functions.invoke("generate-blog-post", {
-        body: { post_id: post.id, site: siteToRegen },
+      // Fire-and-forget via direct fetch (bypasses any supabase-js timeout quirks).
+      // Edge Function returns 202 immediately; work runs in background.
+      // Realtime subscription handles completion.
+      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-blog-post`;
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "apikey": process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+        },
+        body: JSON.stringify({ post_id: post.id, site: siteToRegen }),
       });
-      if (error) throw new Error(error.message);
+      console.log("[blog-v3-fire-forget] response status", res.status);
+      if (!res.ok && res.status !== 202) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
       toaster.push({
         title: `⏳ ${BLOG_SITE_LABELS[siteToRegen].label} üretiliyor`,
         body: "~80 sn sürer. Sayfa hazır olunca otomatik yenilenir.",
         variant: "success",
       });
-      // setRegeneratingSite stays set until realtime update arrives
     } catch (e) {
-      toaster.push({ title: "Başlatılamadı", body: (e as Error).message, variant: "error" });
+      console.error("[blog-v3-fire-forget] error", e);
+      toaster.push({ title: "Başlatılamadı (v3)", body: (e as Error).message, variant: "error" });
       setRegeneratingSite(null);
     }
   }
@@ -134,29 +149,40 @@ export function ReviewClient({
     toaster.push({ title: "Taslak kaydedildi", variant: "success" });
   }
 
+  async function fireGenerate(site: BlogSiteVersion["site"]): Promise<void> {
+    const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-blog-post`;
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "apikey": process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+      },
+      body: JSON.stringify({ post_id: post.id, site }),
+    });
+    if (!res.ok && res.status !== 202) {
+      throw new Error(`${site} HTTP ${res.status}`);
+    }
+  }
+
   async function regenerateAll() {
     if (!confirm("İki versiyon da yeniden üretilecek (~90 sn). Devam?"))
       return;
     setRegenerating(true);
     try {
-      const [kRes, vRes] = await Promise.all([
-        supabase.functions.invoke("generate-blog-post", {
-          body: { post_id: post.id, site: "bodrumapartkiralama" },
-        }),
-        supabase.functions.invoke("generate-blog-post", {
-          body: { post_id: post.id, site: "bodrumapartvilla" },
-        }),
+      await Promise.all([
+        fireGenerate("bodrumapartkiralama"),
+        fireGenerate("bodrumapartvilla"),
       ]);
-      if (kRes.error) throw new Error("Kiralama: " + kRes.error.message);
-      if (vRes.error) throw new Error("Villa: " + vRes.error.message);
       toaster.push({
         title: "⏳ Tüm versiyonlar üretiliyor",
         body: "~90 sn sürer. Sayfa otomatik yenilenir.",
         variant: "success",
       });
-      // setRegenerating stays true; realtime callback clears it
     } catch (e) {
-      toaster.push({ title: "Başlatılamadı", body: (e as Error).message, variant: "error" });
+      toaster.push({ title: "Başlatılamadı (v3)", body: (e as Error).message, variant: "error" });
       setRegenerating(false);
     }
   }
