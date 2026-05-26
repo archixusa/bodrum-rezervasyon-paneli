@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/PageHeader";
 import { Inbox, CalendarCheck, Wallet, Percent } from "lucide-react";
 import Link from "next/link";
-import type { ReservationRequest, Reservation } from "@/lib/types";
+import type { ReservationRequest } from "@/lib/types";
 import { formatDate, formatMoney, SITE_LABELS, timeAgo } from "@/lib/format";
 
 export default async function DashboardPage() {
@@ -13,19 +13,25 @@ export default async function DashboardPage() {
   startOfMonth.setHours(0, 0, 0, 0);
   const startISO = startOfMonth.toISOString();
 
-  const [requests, reservations, upcoming] = await Promise.all([
+  const [requests, reservations, upcoming, newRequestsRes] = await Promise.all([
     supabase
       .from("reservation_requests")
-      .select("*", { count: "exact" })
+      .select("id,status,created_at")
       .gte("created_at", startISO),
     supabase
       .from("reservations")
-      .select("*")
+      .select("amount,commission_rate,created_at")
       .gte("created_at", startISO),
     supabase
       .from("upcoming_movements")
       .select("*")
       .limit(8),
+    supabase
+      .from("reservation_requests")
+      .select("*")
+      .eq("status", "new")
+      .order("created_at", { ascending: false })
+      .limit(10),
   ]);
 
   const monthRequests = requests.data ?? [];
@@ -40,24 +46,19 @@ export default async function DashboardPage() {
     movement_type: "arrival" | "departure" | null;
   }>;
 
-  const converted = monthRequests.filter((r: ReservationRequest) => r.status === "converted").length;
+  const converted = monthRequests.filter((r) => r.status === "converted").length;
   const conversionRate =
     monthRequests.length > 0 ? Math.round((converted / monthRequests.length) * 100) : 0;
   const totalRevenue = monthReservations.reduce(
-    (s: number, r: Reservation) => s + Number(r.amount || 0),
+    (s: number, r) => s + Number(r.amount || 0),
     0
   );
-  const estimatedCommission = monthReservations.reduce((s: number, r: Reservation) => {
+  const estimatedCommission = monthReservations.reduce((s: number, r) => {
     const rate = r.commission_rate ?? 15;
     return s + Number(r.amount || 0) * (Number(rate) / 100);
   }, 0);
 
-  const { data: newRequests } = await supabase
-    .from("reservation_requests")
-    .select("*")
-    .eq("status", "new")
-    .order("created_at", { ascending: false })
-    .limit(10);
+  const newRequests = newRequestsRes.data;
 
   return (
     <>

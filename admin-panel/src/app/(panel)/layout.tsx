@@ -1,19 +1,14 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/Sidebar";
 import { ToasterProvider } from "@/components/Toaster";
 
-export default async function PanelLayout({
+// Auth is verified in middleware.ts on every panel request — no need to re-check here.
+// This eliminates a duplicate ~200-400ms Supabase Auth round-trip per navigation.
+
+export default function PanelLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
   return (
     <ToasterProvider>
       <div className="flex min-h-screen">

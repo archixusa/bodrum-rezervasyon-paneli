@@ -18,17 +18,19 @@ import {
   Target,
   Mail,
   DoorOpen,
+  PenSquare,
 } from "lucide-react";
 import clsx from "clsx";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const NAV = [
-  { href: "/",                     label: "Dashboard",         icon: LayoutDashboard },
-  { href: "/requests",             label: "Rezervasyon İstek", icon: Inbox },
-  { href: "/leads/applications",   label: "Sahip Başvuruları", icon: Home },
-  { href: "/leads",                label: "Lead Avcılığı",     icon: Target },
+  { href: "/",                     label: "Dashboard",          icon: LayoutDashboard },
+  { href: "/applications",         label: "Ev Sahibi Başvurusu", icon: Home },
+  { href: "/requests",             label: "Rezervasyon İstek",  icon: Inbox },
+  { href: "/leads",                label: "Lead Avcılığı",      icon: Target },
   { href: "/outreach",             label: "Partnership",       icon: Mail },
+  { href: "/blog",                 label: "Blog",              icon: PenSquare },
   { href: "/reservations",         label: "Rezervasyonlar",    icon: CalendarDays },
   { href: "/checkin",              label: "Giriş / Çıkış",     icon: DoorOpen },
   { href: "/calendar",             label: "Takvim",            icon: CalendarDays },
