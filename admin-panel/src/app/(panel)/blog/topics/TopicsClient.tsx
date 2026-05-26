@@ -11,6 +11,29 @@ import {
   BLOG_SEASON_LABELS,
 } from "@/lib/types-blog";
 
+// Jaccard bigram similarity — duplicates the helper in the edge fn for client-side scoring
+function jaccardBigram(a: string, b: string): number {
+  const toBigrams = (s: string) => {
+    const tokens = s
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    const set = new Set<string>();
+    for (let i = 0; i < tokens.length - 1; i++) {
+      set.add(tokens[i] + " " + tokens[i + 1]);
+    }
+    return set;
+  };
+  const A = toBigrams(a);
+  const B = toBigrams(b);
+  if (A.size === 0 && B.size === 0) return 0;
+  let intersect = 0;
+  for (const x of A) if (B.has(x)) intersect++;
+  const union = A.size + B.size - intersect;
+  return union === 0 ? 0 : intersect / union;
+}
+
 export function TopicsClient({
   initial,
   autoOpenGenerate: _autoOpenGenerate,
@@ -65,17 +88,64 @@ export function TopicsClient({
   async function generateFromTopic(t: BlogTopic) {
     setGeneratingId(t.id);
     try {
-      const { data, error } = await supabase.functions.invoke("generate-blog-post", {
-        body: { topic_id: t.id },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error ?? "Bilinmeyen hata");
+      // 1. Create blog_posts row
+      const { data: post, error: postErr } = await supabase
+        .from("blog_posts")
+        .insert({
+          topic: t.topic,
+          topic_category: t.category,
+          brief: t.rationale,
+          status: "generating",
+        })
+        .select("id")
+        .single();
+      if (postErr || !post) throw postErr ?? new Error("post insert failed");
+
+      // 2. Mark topic used
+      await supabase
+        .from("blog_topic_pool")
+        .update({ used: true, used_in_post_id: post.id, used_at: new Date().toISOString() })
+        .eq("id", t.id);
+
+      // 3. Invoke generate-blog-post TWICE in parallel (one per site).
+      //    Each invocation has its own 150-sec Edge Function budget.
+      const [kRes, vRes] = await Promise.all([
+        supabase.functions.invoke("generate-blog-post", {
+          body: { post_id: post.id, site: "bodrumapartkiralama" },
+        }),
+        supabase.functions.invoke("generate-blog-post", {
+          body: { post_id: post.id, site: "bodrumapartvilla" },
+        }),
+      ]);
+
+      const kData = kRes.data;
+      const vData = vRes.data;
+      if (kRes.error || !kData?.ok) {
+        throw new Error("Kiralama versiyonu hatası: " + (kData?.error ?? kRes.error?.message));
+      }
+      if (vRes.error || !vData?.ok) {
+        throw new Error("Villa versiyonu hatası: " + (vData?.error ?? vRes.error?.message));
+      }
+
+      // 4. Compute Jaccard bigram similarity
+      const sim = jaccardBigram(kData.body_md, vData.body_md);
+
+      // 5. Update both versions with similarity score
+      await supabase
+        .from("blog_site_versions")
+        .update({ similarity_to_sibling: sim })
+        .eq("post_id", post.id);
+
+      // 6. Mark post as review-ready
+      await supabase.from("blog_posts").update({ status: "review" }).eq("id", post.id);
+
+      const totalCost = (kData.cost_usd ?? 0) + (vData.cost_usd ?? 0);
       toaster.push({
         title: "📝 Yazı taslağı hazır",
-        body: `İki site versiyonu üretildi. Benzerlik: %${Math.round((data.similarity ?? 0) * 100)}, maliyet: $${(data.cost_usd ?? 0).toFixed(3)}`,
+        body: `Benzerlik %${Math.round(sim * 100)} · ${kData.word_count}/${vData.word_count} kelime · $${totalCost.toFixed(3)}`,
         variant: "success",
       });
-      router.push(`/blog/${data.post_id}/review`);
+      router.push(`/blog/${post.id}/review`);
     } catch (e) {
       toaster.push({
         title: "Üretim başarısız",
