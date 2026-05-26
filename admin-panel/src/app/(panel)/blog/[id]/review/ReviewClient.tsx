@@ -3,6 +3,23 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+
+// Same Jaccard bigram helper as TopicsClient — kept duplicate for now
+function jaccardBigram(a: string, b: string): number {
+  const toBigrams = (s: string) => {
+    const tokens = s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+    const set = new Set<string>();
+    for (let i = 0; i < tokens.length - 1; i++) set.add(tokens[i] + " " + tokens[i + 1]);
+    return set;
+  };
+  const A = toBigrams(a);
+  const B = toBigrams(b);
+  if (A.size === 0 && B.size === 0) return 0;
+  let intersect = 0;
+  for (const x of A) if (B.has(x)) intersect++;
+  const union = A.size + B.size - intersect;
+  return union === 0 ? 0 : intersect / union;
+}
 import {
   CheckCircle2,
   AlertTriangle,
@@ -27,11 +44,51 @@ export function ReviewClient({
   const supabase = useMemo(() => createClient(), []);
   const toaster = useToaster();
   const [regenerating, setRegenerating] = useState(false);
+  const [regeneratingSite, setRegeneratingSite] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, BlogSiteVersion>>(() =>
     Object.fromEntries(versions.map((v) => [v.id, v]))
   );
 
   const similarity = versions[0]?.similarity_to_sibling ?? 0;
+
+  async function regenerateSingleSite(siteToRegen: BlogSiteVersion["site"]) {
+    if (!confirm(`Sadece "${BLOG_SITE_LABELS[siteToRegen].label}" versiyonu yeniden üretilecek. Devam?`))
+      return;
+    setRegeneratingSite(siteToRegen);
+    try {
+      // Call edge fn for just this site (upsert pattern — existing row will be updated)
+      const { data, error } = await supabase.functions.invoke("generate-blog-post", {
+        body: { post_id: post.id, site: siteToRegen },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error);
+
+      // Find the sibling's body_md and recompute similarity
+      const sibling = versions.find((v) => v.site !== siteToRegen);
+      const newBodyMd = data.body_md as string;
+      let newSim: number | null = null;
+      if (sibling) {
+        newSim = jaccardBigram(newBodyMd, sibling.body_md);
+        await supabase
+          .from("blog_site_versions")
+          .update({ similarity_to_sibling: newSim })
+          .eq("post_id", post.id);
+      }
+
+      toaster.push({
+        title: `✨ ${BLOG_SITE_LABELS[siteToRegen].label} yeniden üretildi`,
+        body: `${data.word_count} kelime · benzerlik %${Math.round((newSim ?? 0) * 100)}${data.passes_quality_gate ? " · gate OK" : " · gate FAIL"}`,
+        variant: "success",
+      });
+
+      // Refresh page to show new content
+      router.refresh();
+    } catch (e) {
+      toaster.push({ title: "Hata", body: (e as Error).message, variant: "error" });
+    } finally {
+      setRegeneratingSite(null);
+    }
+  }
 
   async function saveDraft(v: BlogSiteVersion) {
     const { error } = await supabase
@@ -54,20 +111,36 @@ export function ReviewClient({
   }
 
   async function regenerateAll() {
-    if (!confirm("Mevcut iki versiyon SİLİNECEK ve aynı konudan yeniden üretilecek. Devam?"))
+    if (!confirm("İki versiyon da yeniden üretilecek (yaklaşık 90 saniye). Devam?"))
       return;
     setRegenerating(true);
     try {
-      // Delete existing versions for this post
-      await supabase.from("blog_site_versions").delete().eq("post_id", post.id);
-      // Re-invoke generate with same topic
-      const { data, error } = await supabase.functions.invoke("generate-blog-post", {
-        body: { topic_text: post.topic, category: post.topic_category, brief: post.brief },
+      // Parallel two-site regenerate via edge fn (upsert)
+      const [kRes, vRes] = await Promise.all([
+        supabase.functions.invoke("generate-blog-post", {
+          body: { post_id: post.id, site: "bodrumapartkiralama" },
+        }),
+        supabase.functions.invoke("generate-blog-post", {
+          body: { post_id: post.id, site: "bodrumapartvilla" },
+        }),
+      ]);
+      if (kRes.error || !kRes.data?.ok)
+        throw new Error("Kiralama: " + (kRes.data?.error ?? kRes.error?.message));
+      if (vRes.error || !vRes.data?.ok)
+        throw new Error("Villa: " + (vRes.data?.error ?? vRes.error?.message));
+
+      const sim = jaccardBigram(kRes.data.body_md, vRes.data.body_md);
+      await supabase
+        .from("blog_site_versions")
+        .update({ similarity_to_sibling: sim })
+        .eq("post_id", post.id);
+
+      toaster.push({
+        title: "🔄 Tümü yeniden üretildi",
+        body: `Benzerlik %${Math.round(sim * 100)} · ${kRes.data.word_count}/${vRes.data.word_count} kelime`,
+        variant: "success",
       });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error);
-      toaster.push({ title: "Yeniden üretildi", variant: "success" });
-      router.push(`/blog/${data.post_id}/review`);
+      router.refresh();
     } catch (e) {
       toaster.push({ title: "Hata", body: (e as Error).message, variant: "error" });
     } finally {
@@ -115,6 +188,8 @@ export function ReviewClient({
               version={drafts[v.id]}
               onChange={(updated) => setDrafts((p) => ({ ...p, [v.id]: updated }))}
               onSave={() => saveDraft(drafts[v.id])}
+              onRegenerate={() => regenerateSingleSite(v.site)}
+              isRegenerating={regeneratingSite === v.site}
             />
           ))
         )}
@@ -127,10 +202,14 @@ function VersionCard({
   version: v,
   onChange,
   onSave,
+  onRegenerate,
+  isRegenerating,
 }: {
   version: BlogSiteVersion;
   onChange: (v: BlogSiteVersion) => void;
   onSave: () => void;
+  onRegenerate: () => void;
+  isRegenerating: boolean;
 }) {
   const [tab, setTab] = useState<"preview" | "edit" | "raw">("preview");
   const site = BLOG_SITE_LABELS[v.site];
@@ -144,6 +223,17 @@ function VersionCard({
             <p className="text-[11px] text-muted">{site.tone}</p>
           </div>
           <QualityPanel v={v} />
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            onClick={onRegenerate}
+            disabled={isRegenerating}
+            className="panel-btn-ghost !py-1.5 !text-xs disabled:opacity-50"
+            title="Sadece bu siteyi yeniden üret (~80 sn)"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRegenerating ? "animate-spin" : ""}`} />
+            {isRegenerating ? "Üretiliyor…" : "Bu Siteyi Yeniden Üret"}
+          </button>
         </div>
       </header>
 
