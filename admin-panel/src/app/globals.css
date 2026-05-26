@@ -46,4 +46,7 @@ body {
   .badge-converted { @apply badge bg-success/15 text-success; }
   .badge-rejected { @apply badge bg-danger/15 text-danger; }
   .badge-spam { @apply badge bg-muted/15 text-muted; }
+  .label {
+    @apply mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted;
+  }
 }
