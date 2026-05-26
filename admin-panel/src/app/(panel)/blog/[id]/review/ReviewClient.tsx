@@ -28,6 +28,8 @@ import {
   FileText,
   Eye,
   Code2,
+  Send,
+  ExternalLink,
 } from "lucide-react";
 import { useToaster } from "@/components/Toaster";
 import type { BlogPost, BlogSiteVersion } from "@/lib/types-blog";
@@ -45,8 +47,14 @@ export function ReviewClient({
   const toaster = useToaster();
   const [regenerating, setRegenerating] = useState(false);
   const [regeneratingSite, setRegeneratingSite] = useState<string | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, BlogSiteVersion>>(() =>
     Object.fromEntries(versions.map((v) => [v.id, v]))
+  );
+  // Track previous github_pr_url per version so we can detect transitions
+  // (null → value) and fire a success toast + auto-open new tab.
+  const [prSeen, setPrSeen] = useState<Record<string, string | null>>(() =>
+    Object.fromEntries(versions.map((v) => [v.id, v.github_pr_url ?? null]))
   );
 
   const similarity = versions[0]?.similarity_to_sibling ?? 0;
@@ -59,7 +67,26 @@ export function ReviewClient({
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "blog_site_versions", filter: `post_id=eq.${post.id}` },
-        async () => {
+        async (payload) => {
+          const newRow = (payload.new ?? {}) as Partial<BlogSiteVersion> & { id?: string };
+          // Detect: github_pr_url just appeared (was null → has value)
+          if (newRow.id && newRow.github_pr_url) {
+            const prev = prSeen[newRow.id] ?? null;
+            if (!prev && newRow.github_pr_url) {
+              setPrSeen((s) => ({ ...s, [newRow.id!]: newRow.github_pr_url! }));
+              setPublishingId((p) => (p === newRow.id ? null : p));
+              toaster.push({
+                title: "🚀 GitHub PR açıldı",
+                body: "Yeni sekmede açılıyor. Merge edersen Vercel rebuild başlar.",
+                variant: "success",
+              });
+              if (typeof window !== "undefined") {
+                window.open(newRow.github_pr_url, "_blank", "noopener");
+              }
+              router.refresh();
+              return;
+            }
+          }
           // Recompute similarity with newest data
           const { data: latest } = await supabase
             .from("blog_site_versions")
@@ -126,6 +153,52 @@ export function ReviewClient({
       console.error("[blog-v3-fire-forget] error", e);
       toaster.push({ title: "Başlatılamadı (v3)", body: (e as Error).message, variant: "error" });
       setRegeneratingSite(null);
+    }
+  }
+
+  async function publishVersion(v: BlogSiteVersion) {
+    if (v.github_pr_url) {
+      if (typeof window !== "undefined") {
+        window.open(v.github_pr_url, "_blank", "noopener");
+      }
+      return;
+    }
+    if (
+      !confirm(
+        "GitHub PR açılacak. Sen merge edersen Vercel siteyi rebuild eder. Devam?",
+      )
+    )
+      return;
+    setPublishingId(v.id);
+    try {
+      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/publish-blog-post`;
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+        },
+        body: JSON.stringify({ version_id: v.id }),
+      });
+      if (!res.ok && res.status !== 202) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      toaster.push({
+        title: "⏳ PR açılıyor",
+        body: "GitHub'da branch oluşturulup PR açılıyor. Sayfa hazır olunca otomatik yenilenir.",
+        variant: "success",
+      });
+    } catch (e) {
+      toaster.push({
+        title: "Yayınlanamadı",
+        body: (e as Error).message,
+        variant: "error",
+      });
+      setPublishingId(null);
     }
   }
 
@@ -255,7 +328,9 @@ export function ReviewClient({
               onChange={(updated) => setDrafts((p) => ({ ...p, [v.id]: updated }))}
               onSave={() => saveDraft(drafts[v.id])}
               onRegenerate={() => regenerateSingleSite(v.site)}
+              onPublish={() => publishVersion(drafts[v.id])}
               isRegenerating={regeneratingSite === v.site}
+              isPublishing={publishingId === v.id}
             />
           ))
         )}
@@ -269,16 +344,21 @@ function VersionCard({
   onChange,
   onSave,
   onRegenerate,
+  onPublish,
   isRegenerating,
+  isPublishing,
 }: {
   version: BlogSiteVersion;
   onChange: (v: BlogSiteVersion) => void;
   onSave: () => void;
   onRegenerate: () => void;
+  onPublish: () => void;
   isRegenerating: boolean;
+  isPublishing: boolean;
 }) {
   const [tab, setTab] = useState<"preview" | "edit" | "raw">("preview");
   const site = BLOG_SITE_LABELS[v.site];
+  const alreadyPublished = !!v.github_pr_url;
 
   return (
     <div className="panel-card flex flex-col">
@@ -290,15 +370,43 @@ function VersionCard({
           </div>
           <QualityPanel v={v} />
         </div>
-        <div className="mt-3 flex justify-end">
+        <div className="mt-3 flex flex-wrap justify-end gap-2">
           <button
             onClick={onRegenerate}
-            disabled={isRegenerating}
+            disabled={isRegenerating || isPublishing}
             className="panel-btn-ghost !py-1.5 !text-xs disabled:opacity-50"
             title="Sadece bu siteyi yeniden üret (~80 sn)"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isRegenerating ? "animate-spin" : ""}`} />
             {isRegenerating ? "Üretiliyor…" : "Bu Siteyi Yeniden Üret"}
+          </button>
+          <button
+            onClick={onPublish}
+            disabled={isPublishing || isRegenerating}
+            className={`!py-1.5 !text-xs inline-flex items-center gap-1.5 rounded-md px-3 font-semibold text-white disabled:opacity-50 ${
+              alreadyPublished
+                ? "bg-navy-700 hover:bg-navy-800"
+                : "bg-success hover:brightness-110"
+            }`}
+            title={
+              alreadyPublished
+                ? "PR daha önce açıldı — yeni sekmede aç"
+                : "GitHub'a PR aç (sen merge edince Vercel rebuild eder)"
+            }
+          >
+            {alreadyPublished ? (
+              <>
+                <ExternalLink className="h-3.5 w-3.5" /> PR'ı Aç
+              </>
+            ) : isPublishing ? (
+              <>
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" /> PR açılıyor…
+              </>
+            ) : (
+              <>
+                <Send className="h-3.5 w-3.5" /> ✅ Onayla ve Yayınla (PR aç)
+              </>
+            )}
           </button>
         </div>
       </header>

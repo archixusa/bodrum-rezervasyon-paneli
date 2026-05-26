@@ -49,7 +49,11 @@ async function sb<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
-  return r.json();
+  // 204 No Content (PATCH/DELETE) or empty body (POST without Prefer: return=representation)
+  if (r.status === 204) return undefined as unknown as T;
+  const text = await r.text();
+  if (!text) return undefined as unknown as T;
+  return JSON.parse(text) as T;
 }
 
 function renderTemplate(tpl: string, ctx: Record<string, string>): string {
@@ -199,52 +203,80 @@ async function sendOne(enrollment: Enrollment) {
   return { sent: status === "sent", email: tgt.email };
 }
 
-Deno.serve(async () => {
-  // Today's send count
-  const today = new Date().toISOString().slice(0, 10);
-  const todayRows = await sb<{ sends_count: number; warmup_cap: number }[]>(
-    `outreach_daily_limits?date=eq.${today}`
-  );
-  let sentToday = todayRows[0]?.sends_count ?? 0;
-  // Compute first day of outreach to set cap
-  const firstRows = await sb<{ date: string }[]>(
-    `outreach_daily_limits?select=date&order=date.asc&limit=1`
-  );
-  const start = firstRows[0]?.date ?? today;
-  const daysSince = Math.floor(
-    (new Date(today).getTime() - new Date(start).getTime()) / 86400000
-  );
-  const cap = warmupCap(daysSince);
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, content-type, apikey",
+};
 
-  if (sentToday >= cap) {
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+
+  try {
+    // Today's send count
+    const today = new Date().toISOString().slice(0, 10);
+    const todayRows = await sb<{ sends_count: number; warmup_cap: number }[]>(
+      `outreach_daily_limits?date=eq.${today}`,
+    );
+    let sentToday = todayRows[0]?.sends_count ?? 0;
+
+    // Compute first day of outreach to set cap
+    const firstRows = await sb<{ date: string }[]>(
+      `outreach_daily_limits?select=date&order=date.asc&limit=1`,
+    );
+    const start = firstRows[0]?.date ?? today;
+    const daysSince = Math.floor(
+      (new Date(today).getTime() - new Date(start).getTime()) / 86400000,
+    );
+    const cap = warmupCap(daysSince);
+
+    if (sentToday >= cap) {
+      return new Response(
+        JSON.stringify({ ok: true, skipped: "daily_cap_reached", sentToday, cap }),
+        { headers: { ...CORS, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Find due enrollments
+    const due = await sb<Enrollment[]>(
+      `outreach_enrollments?status=eq.active&next_send_at=lte.${new Date().toISOString()}&select=*,target:outreach_targets(*),sequence:outreach_sequences(steps)&limit=${cap - sentToday}`,
+    );
+
+    const results: unknown[] = [];
+    for (const e of due) {
+      if (sentToday >= cap) break;
+      try {
+        const r = await sendOne(e);
+        results.push(r);
+        if ((r as { sent?: boolean }).sent) sentToday++;
+      } catch (err) {
+        console.error("[outreach-tick] sendOne failed", err);
+        results.push({ error: (err as Error).message, enrollment_id: e.id });
+      }
+    }
+
+    // Update daily counter
+    await sb("outreach_daily_limits", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({ date: today, sends_count: sentToday, warmup_cap: cap }),
+    });
+
     return new Response(
-      JSON.stringify({ ok: true, skipped: "daily cap reached", sentToday, cap }),
-      { headers: { "Content-Type": "application/json" } }
+      JSON.stringify({
+        ok: true,
+        processed: due.length,
+        sentToday,
+        cap,
+        results,
+      }),
+      { headers: { ...CORS, "Content-Type": "application/json" } },
+    );
+  } catch (err) {
+    console.error("[outreach-tick] fatal", err);
+    return new Response(
+      JSON.stringify({ ok: false, error: (err as Error).message }),
+      { status: 500, headers: { ...CORS, "Content-Type": "application/json" } },
     );
   }
-
-  // Find due enrollments
-  const due = await sb<Enrollment[]>(
-    `outreach_enrollments?status=eq.active&next_send_at=lte.${new Date().toISOString()}&select=*,target:outreach_targets(*),sequence:outreach_sequences(steps)&limit=${cap - sentToday}`
-  );
-
-  const results: unknown[] = [];
-  for (const e of due) {
-    if (sentToday >= cap) break;
-    const r = await sendOne(e);
-    results.push(r);
-    if ((r as { sent?: boolean }).sent) sentToday++;
-  }
-
-  // Update daily counter
-  await sb("outreach_daily_limits", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify({ date: today, sends_count: sentToday, warmup_cap: cap }),
-  });
-
-  return new Response(
-    JSON.stringify({ ok: true, processed: due.length, sentToday, cap, results }),
-    { headers: { "Content-Type": "application/json" } }
-  );
 });

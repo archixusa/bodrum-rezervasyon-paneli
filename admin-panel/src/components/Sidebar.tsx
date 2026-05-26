@@ -19,6 +19,7 @@ import {
   Mail,
   DoorOpen,
   PenSquare,
+  Star,
 } from "lucide-react";
 import clsx from "clsx";
 import { createClient } from "@/lib/supabase/client";
@@ -37,6 +38,7 @@ const NAV = [
   { href: "/properties",           label: "Mülkler",           icon: Building2 },
   { href: "/owners",               label: "Mülk Sahipleri",    icon: Users },
   { href: "/guests",               label: "Misafirler",        icon: UserCircle },
+  { href: "/reviews",              label: "Yorumlar",          icon: Star },
   { href: "/finance",              label: "Finans",            icon: TrendingUp },
   { href: "/expenses",             label: "Giderler",          icon: Receipt },
   { href: "/reports",              label: "Raporlar",          icon: FileBarChart },
