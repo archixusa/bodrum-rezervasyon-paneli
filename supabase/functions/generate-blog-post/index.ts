@@ -252,6 +252,7 @@ Yukarıdaki şemada blog yazısı üret.`;
     const row = {
       post_id: post.id,
       site,
+      generated_at: new Date().toISOString(),
       title: json.title,
       slug: json.slug,
       meta_title: json.meta_title ?? json.title,
