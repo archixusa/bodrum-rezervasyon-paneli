@@ -14,23 +14,25 @@ import {
   FileBarChart,
   Settings,
   LogOut,
+  Home,
 } from "lucide-react";
 import clsx from "clsx";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const NAV = [
-  { href: "/",             label: "Dashboard",     icon: LayoutDashboard },
-  { href: "/requests",     label: "İstekler",      icon: Inbox },
-  { href: "/reservations", label: "Rezervasyonlar",icon: CalendarDays },
-  { href: "/calendar",     label: "Takvim",        icon: CalendarDays },
-  { href: "/properties",   label: "Mülkler",       icon: Building2 },
-  { href: "/owners",       label: "Mülk Sahipleri",icon: Users },
-  { href: "/guests",       label: "Misafirler",    icon: UserCircle },
-  { href: "/finance",      label: "Finans",        icon: TrendingUp },
-  { href: "/expenses",     label: "Giderler",      icon: Receipt },
-  { href: "/reports",      label: "Raporlar",      icon: FileBarChart },
-  { href: "/settings",     label: "Ayarlar",       icon: Settings },
+  { href: "/",                     label: "Dashboard",         icon: LayoutDashboard },
+  { href: "/requests",             label: "Rezervasyon İstek", icon: Inbox },
+  { href: "/leads/applications",   label: "Sahip Başvuruları", icon: Home },
+  { href: "/reservations",         label: "Rezervasyonlar",    icon: CalendarDays },
+  { href: "/calendar",             label: "Takvim",            icon: CalendarDays },
+  { href: "/properties",           label: "Mülkler",           icon: Building2 },
+  { href: "/owners",               label: "Mülk Sahipleri",    icon: Users },
+  { href: "/guests",               label: "Misafirler",        icon: UserCircle },
+  { href: "/finance",              label: "Finans",            icon: TrendingUp },
+  { href: "/expenses",             label: "Giderler",          icon: Receipt },
+  { href: "/reports",              label: "Raporlar",          icon: FileBarChart },
+  { href: "/settings",             label: "Ayarlar",           icon: Settings },
 ];
 
 export function Sidebar() {
