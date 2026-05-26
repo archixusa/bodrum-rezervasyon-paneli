@@ -115,6 +115,11 @@ async function sendEmail(app: OwnerApplication) {
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  // Security: webhook secret required (DB trigger passes via pg_net header)
+  const expected = Deno.env.get("INTERNAL_WEBHOOK_SECRET") ?? "";
+  if (expected && req.headers.get("x-webhook-secret") !== expected) {
+    return new Response("Unauthorized", { status: 401 });
+  }
   let payload: { record?: OwnerApplication } | null = null;
   try {
     payload = await req.json();

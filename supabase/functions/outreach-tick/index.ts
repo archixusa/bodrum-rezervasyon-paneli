@@ -212,6 +212,18 @@ const CORS = {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
+  // Security: only the cron job (with INTERNAL_WEBHOOK_SECRET) or an admin
+  // panel server-side proxy (which also knows the secret) may call this.
+  // Browser-side calls with anon key are rejected to prevent abuse.
+  const expectedSecret = Deno.env.get("INTERNAL_WEBHOOK_SECRET") ?? "";
+  const providedSecret = req.headers.get("x-webhook-secret") ?? "";
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "unauthorized" }),
+      { status: 401, headers: { ...CORS, "Content-Type": "application/json" } },
+    );
+  }
+
   try {
     // Today's send count
     const today = new Date().toISOString().slice(0, 10);

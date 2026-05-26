@@ -167,6 +167,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
   }
+  // Security: this function is publicly callable (called by DB trigger via pg_net).
+  // We require INTERNAL_WEBHOOK_SECRET header to prevent abuse / unauthenticated spam.
+  const expected = Deno.env.get("INTERNAL_WEBHOOK_SECRET") ?? "";
+  if (expected && req.headers.get("x-webhook-secret") !== expected) {
+    return new Response("Unauthorized", { status: 401 });
+  }
   let payload: any;
   try {
     payload = await req.json();

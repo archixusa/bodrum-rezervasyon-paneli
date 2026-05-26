@@ -106,15 +106,22 @@ export function OutreachClient({
 
   async function runTick() {
     setWorking(true);
-    const { data, error } = await supabase.functions.invoke("outreach-tick");
-    setWorking(false);
-    if (error) toaster.push({ title: "Tick başarısız", body: error.message, variant: "error" });
-    else
+    try {
+      // Use Next.js API route that proxies with server-side webhook secret.
+      // Browser never sees the secret — security hardening.
+      const res = await fetch("/api/outreach-tick", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
       toaster.push({
         title: "Tick çalıştı",
-        body: JSON.stringify(data).slice(0, 100),
+        body: JSON.stringify(data).slice(0, 120),
         variant: "success",
       });
+    } catch (e) {
+      toaster.push({ title: "Tick başarısız", body: (e as Error).message, variant: "error" });
+    } finally {
+      setWorking(false);
+    }
   }
 
   const newTargets = targets.filter((t) => t.status === "new");
