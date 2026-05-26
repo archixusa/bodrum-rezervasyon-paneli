@@ -107,8 +107,8 @@ export function TopicsClient({
         .update({ used: true, used_in_post_id: post.id, used_at: new Date().toISOString() })
         .eq("id", t.id);
 
-      // 3. Invoke generate-blog-post TWICE in parallel (one per site).
-      //    Each invocation has its own 150-sec Edge Function budget.
+      // 3. Kick off BOTH sites (fire-and-forget — Edge Function returns 202
+      //    immediately, generation runs in background via EdgeRuntime.waitUntil).
       const [kRes, vRes] = await Promise.all([
         supabase.functions.invoke("generate-blog-post", {
           body: { post_id: post.id, site: "bodrumapartkiralama" },
@@ -117,38 +117,18 @@ export function TopicsClient({
           body: { post_id: post.id, site: "bodrumapartvilla" },
         }),
       ]);
+      if (kRes.error) throw new Error("Kiralama start fail: " + kRes.error.message);
+      if (vRes.error) throw new Error("Villa start fail: " + vRes.error.message);
 
-      const kData = kRes.data;
-      const vData = vRes.data;
-      if (kRes.error || !kData?.ok) {
-        throw new Error("Kiralama versiyonu hatası: " + (kData?.error ?? kRes.error?.message));
-      }
-      if (vRes.error || !vData?.ok) {
-        throw new Error("Villa versiyonu hatası: " + (vData?.error ?? vRes.error?.message));
-      }
-
-      // 4. Compute Jaccard bigram similarity
-      const sim = jaccardBigram(kData.body_md, vData.body_md);
-
-      // 5. Update both versions with similarity score
-      await supabase
-        .from("blog_site_versions")
-        .update({ similarity_to_sibling: sim })
-        .eq("post_id", post.id);
-
-      // 6. Mark post as review-ready
-      await supabase.from("blog_posts").update({ status: "review" }).eq("id", post.id);
-
-      const totalCost = (kData.cost_usd ?? 0) + (vData.cost_usd ?? 0);
       toaster.push({
-        title: "📝 Yazı taslağı hazır",
-        body: `Benzerlik %${Math.round(sim * 100)} · ${kData.word_count}/${vData.word_count} kelime · $${totalCost.toFixed(3)}`,
+        title: "⏳ Üretim başladı",
+        body: "İki site versiyonu arka planda hazırlanıyor (~90 sn). Review sayfasına yönlendiriliyorsun…",
         variant: "success",
       });
       router.push(`/blog/${post.id}/review`);
     } catch (e) {
       toaster.push({
-        title: "Üretim başarısız",
+        title: "Başlatılamadı",
         body: (e as Error).message,
         variant: "error",
       });

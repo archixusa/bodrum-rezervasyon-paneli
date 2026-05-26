@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -51,41 +51,65 @@ export function ReviewClient({
 
   const similarity = versions[0]?.similarity_to_sibling ?? 0;
 
+  // Subscribe to realtime updates — fire-and-forget pattern means we
+  // wait for the version row to be updated/inserted, then refresh.
+  useEffect(() => {
+    const channel = supabase
+      .channel(`blog_versions_${post.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "blog_site_versions", filter: `post_id=eq.${post.id}` },
+        async () => {
+          // Recompute similarity with newest data
+          const { data: latest } = await supabase
+            .from("blog_site_versions")
+            .select("site,body_md")
+            .eq("post_id", post.id);
+          if (latest && latest.length === 2) {
+            const [a, b] = latest;
+            const sim = jaccardBigram(a.body_md, b.body_md);
+            await supabase
+              .from("blog_site_versions")
+              .update({ similarity_to_sibling: sim })
+              .eq("post_id", post.id);
+          }
+          // Clear local regenerating state; refresh page
+          setRegeneratingSite(null);
+          setRegenerating(false);
+          toaster.push({
+            title: "✨ Yeni versiyon hazır",
+            body: "Sayfa otomatik yenileniyor",
+            variant: "success",
+          });
+          router.refresh();
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post.id]);
+
   async function regenerateSingleSite(siteToRegen: BlogSiteVersion["site"]) {
-    if (!confirm(`Sadece "${BLOG_SITE_LABELS[siteToRegen].label}" versiyonu yeniden üretilecek. Devam?`))
+    if (!confirm(`Sadece "${BLOG_SITE_LABELS[siteToRegen].label}" versiyonu yeniden üretilecek. (~80 sn)`))
       return;
     setRegeneratingSite(siteToRegen);
     try {
-      // Call edge fn for just this site (upsert pattern — existing row will be updated)
-      const { data, error } = await supabase.functions.invoke("generate-blog-post", {
+      // Fire-and-forget — Edge Function returns 202 immediately,
+      // work runs in background. Realtime subscription handles completion.
+      const { error } = await supabase.functions.invoke("generate-blog-post", {
         body: { post_id: post.id, site: siteToRegen },
       });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error);
-
-      // Find the sibling's body_md and recompute similarity
-      const sibling = versions.find((v) => v.site !== siteToRegen);
-      const newBodyMd = data.body_md as string;
-      let newSim: number | null = null;
-      if (sibling) {
-        newSim = jaccardBigram(newBodyMd, sibling.body_md);
-        await supabase
-          .from("blog_site_versions")
-          .update({ similarity_to_sibling: newSim })
-          .eq("post_id", post.id);
-      }
-
+      if (error) throw new Error(error.message);
       toaster.push({
-        title: `✨ ${BLOG_SITE_LABELS[siteToRegen].label} yeniden üretildi`,
-        body: `${data.word_count} kelime · benzerlik %${Math.round((newSim ?? 0) * 100)}${data.passes_quality_gate ? " · gate OK" : " · gate FAIL"}`,
+        title: `⏳ ${BLOG_SITE_LABELS[siteToRegen].label} üretiliyor`,
+        body: "~80 sn sürer. Sayfa hazır olunca otomatik yenilenir.",
         variant: "success",
       });
-
-      // Refresh page to show new content
-      router.refresh();
+      // setRegeneratingSite stays set until realtime update arrives
     } catch (e) {
-      toaster.push({ title: "Hata", body: (e as Error).message, variant: "error" });
-    } finally {
+      toaster.push({ title: "Başlatılamadı", body: (e as Error).message, variant: "error" });
       setRegeneratingSite(null);
     }
   }
@@ -111,11 +135,10 @@ export function ReviewClient({
   }
 
   async function regenerateAll() {
-    if (!confirm("İki versiyon da yeniden üretilecek (yaklaşık 90 saniye). Devam?"))
+    if (!confirm("İki versiyon da yeniden üretilecek (~90 sn). Devam?"))
       return;
     setRegenerating(true);
     try {
-      // Parallel two-site regenerate via edge fn (upsert)
       const [kRes, vRes] = await Promise.all([
         supabase.functions.invoke("generate-blog-post", {
           body: { post_id: post.id, site: "bodrumapartkiralama" },
@@ -124,26 +147,16 @@ export function ReviewClient({
           body: { post_id: post.id, site: "bodrumapartvilla" },
         }),
       ]);
-      if (kRes.error || !kRes.data?.ok)
-        throw new Error("Kiralama: " + (kRes.data?.error ?? kRes.error?.message));
-      if (vRes.error || !vRes.data?.ok)
-        throw new Error("Villa: " + (vRes.data?.error ?? vRes.error?.message));
-
-      const sim = jaccardBigram(kRes.data.body_md, vRes.data.body_md);
-      await supabase
-        .from("blog_site_versions")
-        .update({ similarity_to_sibling: sim })
-        .eq("post_id", post.id);
-
+      if (kRes.error) throw new Error("Kiralama: " + kRes.error.message);
+      if (vRes.error) throw new Error("Villa: " + vRes.error.message);
       toaster.push({
-        title: "🔄 Tümü yeniden üretildi",
-        body: `Benzerlik %${Math.round(sim * 100)} · ${kRes.data.word_count}/${vRes.data.word_count} kelime`,
+        title: "⏳ Tüm versiyonlar üretiliyor",
+        body: "~90 sn sürer. Sayfa otomatik yenilenir.",
         variant: "success",
       });
-      router.refresh();
+      // setRegenerating stays true; realtime callback clears it
     } catch (e) {
-      toaster.push({ title: "Hata", body: (e as Error).message, variant: "error" });
-    } finally {
+      toaster.push({ title: "Başlatılamadı", body: (e as Error).message, variant: "error" });
       setRegenerating(false);
     }
   }

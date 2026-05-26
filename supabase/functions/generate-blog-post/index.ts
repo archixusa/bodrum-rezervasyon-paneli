@@ -28,7 +28,9 @@ const CORS = {
 // ---------- shared prompt fragments --------------------------------------
 const QUALITY_RULES = `
 YAPISAL ZORUNLULUKLAR:
-- 800-1000 kelime arası (KESİN. 1000'i AŞMA. JSON'u tamamla, kesintide kalma)
+- KESİN 700-900 kelime arası. 900'ü ASLA AŞMA.
+- ÖNCELİK: JSON'un EKSİKSİZ tamamlanması. body_md uzayacaksa KISALT.
+- Eğer kelime sayısı 850'yi geçerse paragrafları kısaltarak topla.
 - 4-6 H2 başlığı, H1 YAZMA (title JSON'a gidiyor)
 - En az 4 görsel slot tanımla (markdown'a görsel YERLEŞTİRME, image_slots dizisinde)
 - En az 2 "lokal sinyal": GERÇEK Bodrum mahalle/koy adı veya sezon/saat mikrobilgi
@@ -155,8 +157,8 @@ function qualityCheck(v: any) {
   const banned = bannedHits(v.body_md);
   const issues: string[] = [];
 
-  if (wc < 800) issues.push(`word_count_low (${wc})`);
-  if (wc > 2500) issues.push(`word_count_high (${wc})`);
+  if (wc < 650) issues.push(`word_count_low (${wc})`);
+  if (wc > 1100) issues.push(`word_count_high (${wc})`);
   if (h2 < 3) issues.push(`h2_count_low (${h2})`);
   if ((v.image_slots ?? []).length < 4) issues.push("image_slots_low");
   if (!v.meta_description || v.meta_description.length < 140 || v.meta_description.length > 160)
@@ -216,26 +218,13 @@ function seasonFromMonth(m: number): string {
   return "winter";
 }
 
-// ---------- main handler -------------------------------------------------
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+// ---------- background worker -------------------------------------------
+async function runGeneration(post_id: string, site: string) {
+  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false },
+  });
 
   try {
-    const body = await req.json();
-    const { post_id, site } = body;
-
-    if (!post_id || !site) {
-      throw new Error("post_id and site required");
-    }
-    if (site !== "bodrumapartkiralama" && site !== "bodrumapartvilla") {
-      throw new Error("invalid site");
-    }
-
-    const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { persistSession: false },
-    });
-
-    // 1. Load post
     const { data: post, error: postErr } = await sb
       .from("blog_posts")
       .select("*")
@@ -251,18 +240,15 @@ SEZON: ${season}
 
 Yukarıdaki şemada blog yazısı üret.`;
 
-    // 2. Call Claude (single call, single site)
     const systemPrompt = site === "bodrumapartkiralama" ? KIRALAMA_PROMPT : VILLA_PROMPT;
     const ai = await callClaude(systemPrompt, userPrompt);
     const json = parseAiJson(ai.text);
 
-    // 3. Quality check
     const qc = qualityCheck(json);
     const cost =
       (ai.usage?.input_tokens ?? 0) * 0.000003 +
       (ai.usage?.output_tokens ?? 0) * 0.000015;
 
-    // 4. Insert version
     const row = {
       post_id: post.id,
       site,
@@ -296,7 +282,6 @@ Yukarıdaki şemada blog yazısı üret.`;
       status: "review",
     };
 
-    // Upsert in case of retry
     const { data: existing } = await sb
       .from("blog_site_versions")
       .select("id")
@@ -304,42 +289,61 @@ Yukarıdaki şemada blog yazısı üret.`;
       .eq("site", site)
       .maybeSingle();
 
-    let versionId: string;
     if (existing) {
-      const { error } = await sb
-        .from("blog_site_versions")
-        .update(row)
-        .eq("id", existing.id);
-      if (error) throw new Error("version update: " + error.message);
-      versionId = existing.id;
+      await sb.from("blog_site_versions").update(row).eq("id", existing.id);
     } else {
-      const { data: inserted, error } = await sb
-        .from("blog_site_versions")
-        .insert(row)
-        .select("id")
-        .single();
-      if (error || !inserted) throw new Error("version insert: " + error?.message);
-      versionId = inserted.id;
+      await sb.from("blog_site_versions").insert(row);
     }
 
+    // Mark post as review (both versions or just this one — set to review either way)
+    await sb.from("blog_posts").update({ status: "review" }).eq("id", post_id);
+    console.log(`[generate-blog-post] done: post=${post_id} site=${site} words=${qc.word_count}`);
+  } catch (err) {
+    console.error(`[generate-blog-post] worker error post=${post_id} site=${site}:`, err);
+    // Update post status to flag error
+    try {
+      await sb
+        .from("blog_posts")
+        .update({
+          status: "idea",
+          brief: `[ERR ${site}] ${(err as Error).message}`,
+        })
+        .eq("id", post_id);
+    } catch {}
+  }
+}
+
+// ---------- main handler -------------------------------------------------
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+
+  try {
+    const body = await req.json();
+    const { post_id, site } = body;
+
+    if (!post_id || !site) {
+      throw new Error("post_id and site required");
+    }
+    if (site !== "bodrumapartkiralama" && site !== "bodrumapartvilla") {
+      throw new Error("invalid site");
+    }
+
+    // Fire-and-forget: kick off generation in background, return 202 immediately.
+    // Browser/proxy keeps choking on long (~90s) connections — this pattern
+    // sidesteps the issue. Client polls via Supabase Realtime subscription
+    // on blog_site_versions inserts/updates.
+    // @ts-ignore — EdgeRuntime is a Supabase Edge Functions global
+    EdgeRuntime.waitUntil(runGeneration(post_id, site));
+
     return new Response(
-      JSON.stringify({
-        ok: true,
-        version_id: versionId,
-        site,
-        word_count: qc.word_count,
-        passes_quality_gate: qc.passes,
-        quality_issues: qc.issues,
-        cost_usd: cost,
-        body_md: json.body_md, // returned so client can compute similarity
-      }),
-      { headers: { ...CORS, "content-type": "application/json" } },
+      JSON.stringify({ ok: true, status: "started", post_id, site }),
+      { status: 202, headers: { ...CORS, "content-type": "application/json" } },
     );
   } catch (err) {
-    console.error("[generate-blog-post] error", err);
+    console.error("[generate-blog-post] handler error", err);
     return new Response(
       JSON.stringify({ ok: false, error: (err as Error).message }),
-      { status: 500, headers: { ...CORS, "content-type": "application/json" } },
+      { status: 400, headers: { ...CORS, "content-type": "application/json" } },
     );
   }
 });
