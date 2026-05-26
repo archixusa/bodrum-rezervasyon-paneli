@@ -17,6 +17,7 @@ import {
   Home,
   Target,
   Mail,
+  DoorOpen,
 } from "lucide-react";
 import clsx from "clsx";
 import { createClient } from "@/lib/supabase/client";
@@ -29,6 +30,7 @@ const NAV = [
   { href: "/leads",                label: "Lead Avcılığı",     icon: Target },
   { href: "/outreach",             label: "Partnership",       icon: Mail },
   { href: "/reservations",         label: "Rezervasyonlar",    icon: CalendarDays },
+  { href: "/checkin",              label: "Giriş / Çıkış",     icon: DoorOpen },
   { href: "/calendar",             label: "Takvim",            icon: CalendarDays },
   { href: "/properties",           label: "Mülkler",           icon: Building2 },
   { href: "/owners",               label: "Mülk Sahipleri",    icon: Users },
