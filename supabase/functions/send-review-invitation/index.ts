@@ -38,7 +38,7 @@ const FROM_EMAIL = Deno.env.get("REVIEW_FROM_EMAIL") ?? "rezervasyon@bodrumapart
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, content-type, apikey",
+  "Access-Control-Allow-Headers": "authorization, content-type, apikey, x-client-info",
 };
 
 function buildEmailHtml(opts: {
