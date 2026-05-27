@@ -234,7 +234,7 @@ async function ghCreatePR(
   branch: string,
   title: string,
   body: string,
-): Promise<string> {
+): Promise<{ url: string; number: number | null }> {
   const r = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/pulls`,
     {
@@ -250,7 +250,6 @@ async function ghCreatePR(
   if (!r.ok) {
     const errText = await r.text();
     if (errText.includes("A pull request already exists")) {
-      // Look up the existing PR
       const list = await fetch(
         `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/pulls?head=${GITHUB_OWNER}:${branch}&state=open`,
         {
@@ -262,14 +261,64 @@ async function ghCreatePR(
       );
       if (list.ok) {
         const arr = await list.json();
-        if (Array.isArray(arr) && arr.length > 0) return arr[0].html_url as string;
+        if (Array.isArray(arr) && arr.length > 0) {
+          return { url: arr[0].html_url as string, number: arr[0].number as number };
+        }
       }
-      return "(already exists)";
+      return { url: "(already exists)", number: null };
     }
     throw new Error(`GitHub create PR ${r.status}: ${errText}`);
   }
   const pr = await r.json();
-  return pr.html_url as string;
+  return { url: pr.html_url as string, number: pr.number as number };
+}
+
+async function ghMergePR(repo: string, prNumber: number): Promise<void> {
+  // Try squash merge first (cleaner history). Fall back to standard merge.
+  for (const method of ["squash", "merge"] as const) {
+    const r = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/pulls/${prNumber}/merge`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `token ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ merge_method: method }),
+      },
+    );
+    if (r.ok) {
+      console.log(`[publish-blog-post] PR #${prNumber} merged via ${method}`);
+      return;
+    }
+    if (r.status === 405 || r.status === 409) {
+      // method not allowed or mergeable=false yet — try alternative
+      console.warn(`[publish-blog-post] PR #${prNumber} ${method} failed ${r.status}, trying next`);
+      continue;
+    }
+    const errText = await r.text();
+    throw new Error(`GitHub merge PR ${r.status}: ${errText}`);
+  }
+  // None worked — leave PR open so admin can merge manually.
+  console.warn(`[publish-blog-post] PR #${prNumber} auto-merge failed; will need manual merge`);
+}
+
+async function ghDeleteBranch(repo: string, branch: string): Promise<void> {
+  try {
+    await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/git/refs/heads/${branch}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `token ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+        },
+      },
+    );
+  } catch {
+    // best-effort
+  }
 }
 
 // ---------- background worker -------------------------------------------
@@ -339,12 +388,28 @@ async function runPublish(version_id: string) {
       `_Version ID: \`${v.id}\`_`,
     ].join("\n");
 
-    const prUrl = await ghCreatePR(
+    const { url: prUrl, number: prNumber } = await ghCreatePR(
       repo,
       branch,
       `feat(blog): ${v.title}`,
       prBody,
     );
+
+    // Auto-merge so the blog post goes live without manual review.
+    // GitHub may need a moment to compute mergeability — retry up to 3 times.
+    let merged = false;
+    if (prNumber) {
+      for (let attempt = 0; attempt < 3 && !merged; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 3000));
+        try {
+          await ghMergePR(repo, prNumber);
+          merged = true;
+        } catch (err) {
+          console.warn(`[publish-blog] auto-merge attempt ${attempt + 1} failed:`, err);
+        }
+      }
+      if (merged) await ghDeleteBranch(repo, branch);
+    }
 
     const publishedUrl = `${SITE_URL_MAP[v.site]}/blog/${v.slug}`;
 
