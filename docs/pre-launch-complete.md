@@ -41,19 +41,26 @@ Bu doküman, iki Vercel sitesinin paylaşıma hazırlanması için yapılan tüm
 
 ## Beklemekte Olan PR'lar
 
-### bodrumapartkiralama-com (https://github.com/archixusa/bodrumapartkiralama-com)
-1. `cleanup/pre-launch-prep` — Coming Soon sayfaları + fake data temizlik
-2. `refactor/professional-tone` — kelime/ton temizlik + cookie consent
-3. `feat/corporate-pages` — about/contact/kvkk/cookies/terms/sss
-4. `chore/seo-pre-launch` — robots/sitemap/meta/schema/favicons/GA
+### bodrumapartkiralama-com — TÜMÜ AÇIK ✅
+1. PR #6 [cleanup/pre-launch-prep](https://github.com/archixusa/bodrumapartkiralama-com/pull/6) — Coming Soon + fake data temizliği
+2. PR #7 [refactor/professional-tone](https://github.com/archixusa/bodrumapartkiralama-com/pull/7) — ton temizliği + cookie consent
+3. PR #8 [feat/corporate-pages](https://github.com/archixusa/bodrumapartkiralama-com/pull/8) — about/contact/KVKK/cookies/terms/SSS
+4. PR #9 [chore/seo-pre-launch](https://github.com/archixusa/bodrumapartkiralama-com/pull/9) — robots/sitemap/meta/schema/favicons/GA
 
-### bodrumapartvilla-com (https://github.com/archixusa/bodrumapartvilla-com)
-1. `cleanup/pre-launch-prep` — Premium Coming Soon + fake data temizlik
-2. `refactor/professional-tone` — boutique tone + cookie consent
-3. `feat/corporate-pages` — premium-tone corporate pages
-4. `chore/seo-pre-launch` — villa-specific SEO
+### bodrumapartvilla-com
+1. PR #7 [cleanup/pre-launch-prep](https://github.com/archixusa/bodrumapartvilla-com/pull/7) — Premium Coming Soon
+2. PR #8 [refactor/professional-tone](https://github.com/archixusa/bodrumapartvilla-com/pull/8) — boutique tone + cookie consent
+3. PR #10 [feat/corporate-pages](https://github.com/archixusa/bodrumapartvilla-com/pull/10) — premium tone hakkımızda/iletişim/KVKK/çerez/kullanım/SSS
+4. PR #9 [chore/seo-pre-launch](https://github.com/archixusa/bodrumapartvilla-com/pull/9) — sitemap/meta/schema/favicons/GA
 
-PR URL'leri: [agent raporundan eklenecek]
+**Sıralı merge önerisi**: cleanup → refactor-tone → corporate-pages → seo (her sitenin kendi içinde).
+
+## Ek son temizlikler
+
+- **Furkan Şahin** ismi her iki sitenin TÜM açık branch'lerinden (8 branch) tamamen silindi: `/yazar/furkan-sahin` sayfaları, layout metadata authors, blog post bio bölümü, mdx-blog default değerleri, sitemap girdileri.
+- **2013 kuruluş yılı** her iki sitenin `/hakkimizda` sayfasına eklendi.
+- Blog yazılarındaki author bio kutusu artık "Bodrumapartkiralama Editör Ekibi" / villa'da kurumsal editör adı kullanıyor.
+- AboutPage schema.org JSON-LD'den founder Person kaldırıldı, `foundingDate: "2013"` eklendi.
 
 ---
 
