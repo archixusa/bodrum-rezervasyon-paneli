@@ -321,18 +321,23 @@ export function ReviewClient({
             Bu post için henüz versiyon yok.
           </p>
         ) : (
-          versions.map((v) => (
-            <VersionCard
-              key={v.id}
-              version={drafts[v.id]}
-              onChange={(updated) => setDrafts((p) => ({ ...p, [v.id]: updated }))}
-              onSave={() => saveDraft(drafts[v.id])}
-              onRegenerate={() => regenerateSingleSite(v.site)}
-              onPublish={() => publishVersion(drafts[v.id])}
-              isRegenerating={regeneratingSite === v.site}
-              isPublishing={publishingId === v.id}
-            />
-          ))
+          versions.map((v) => {
+            // Fallback to fresh server version if local draft is missing
+            // (happens when realtime refresh adds a new version after mount)
+            const current = drafts[v.id] ?? v;
+            return (
+              <VersionCard
+                key={v.id}
+                version={current}
+                onChange={(updated) => setDrafts((p) => ({ ...p, [v.id]: updated }))}
+                onSave={() => saveDraft(current)}
+                onRegenerate={() => regenerateSingleSite(v.site)}
+                onPublish={() => publishVersion(current)}
+                isRegenerating={regeneratingSite === v.site}
+                isPublishing={publishingId === v.id}
+              />
+            );
+          })
         )}
       </div>
     </>
